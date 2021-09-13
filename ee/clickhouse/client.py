@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -35,6 +36,8 @@ from posthog.settings import (
 )
 from posthog.utils import get_safe_cache
 
+logger = logging.getLogger(__file__)
+
 CACHE_TTL = 60  # seconds
 SLOW_QUERY_THRESHOLD_MS = 15000
 QUERY_TIMEOUT_THREAD = get_timer_thread("ee.clickhouse.client", SLOW_QUERY_THRESHOLD_MS)
@@ -60,11 +63,16 @@ def make_ch_pool(**overrides) -> ChPool:
     return ChPool(**kwargs)
 
 
+class ClickhouseNotConfigured(Exception):
+    def __init__(self, message: str = "`Clickhouse` support not configured", *args: Any):
+        super().__init__(message, *args)
+
+
 if PRIMARY_DB != AnalyticsDBMS.CLICKHOUSE:
     ch_client = None  # type: Client
 
     def async_execute(query, args=None, settings=None, with_column_types=False):
-        return
+        raise ClickhouseNotConfigured()
 
     def sync_execute(query, args=None, settings=None, with_column_types=False):
         return
@@ -137,6 +145,7 @@ else:
             timeout_task = QUERY_TIMEOUT_THREAD.schedule(_notify_of_slow_query_failure, tags)
 
             try:
+                logger.debug("CLICKHOUSE_SYNC_QUERY: %s", format_sql(sql, args))
                 result = client.execute(sql, args, settings=settings, with_column_types=with_column_types)
             except Exception as err:
                 err = wrap_query_error(err)
